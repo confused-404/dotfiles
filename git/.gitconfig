@@ -1,3 +1,5 @@
 [user]
 	email = hosta.gruen@gmail.com
 	name = Yves Kloeckner
+[credential]
+	helper = cache
