@@ -3,3 +3,5 @@
 	name = Yves Kloeckner
 [credential]
 	helper = store
+[init]
+	defaultBranch = main
