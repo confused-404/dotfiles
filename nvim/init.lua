@@ -84,6 +84,13 @@ I hope you enjoy your Neovim journey,
 P.S. You can delete this when you're done too. It's your config now! :)
 --]]
 
+-- Prefer host-built user tools over prebuilt npm binaries. This matters on
+-- older Linux releases where npm's tree-sitter binary may require newer glibc.
+do
+  local home = vim.env.HOME
+  if home then vim.env.PATH = table.concat({ home .. '/.cargo/bin', home .. '/.local/bin', vim.env.PATH or '' }, ':') end
+end
+
 -- ============================================================
 -- SECTION 1: OPTIONS
 -- Core Neovim settings, leaders, options, basic keymaps, basic autocmds
@@ -904,9 +911,25 @@ do
   -- NOTE: You can also specify a branch or a specific commit
   vim.pack.add { { src = gh 'nvim-treesitter/nvim-treesitter', version = 'main' } }
 
+  local required_cli_version = vim.version.parse '0.26.1'
+  local cli_result = vim.system({ 'tree-sitter', '--version' }, { text = true }):wait()
+  local cli_version = cli_result.code == 0 and vim.version.parse((cli_result.stdout or ''):match '%d+%.%d+%.%d+') or nil
+  local tree_sitter_cli_ok = cli_version ~= nil and vim.version.ge(cli_version, required_cli_version)
+
   -- Ensure basic parsers are installed
   local parsers = { 'bash', 'c', 'diff', 'html', 'lua', 'luadoc', 'markdown', 'markdown_inline', 'query', 'rust', 'vim', 'vimdoc' }
-  require('nvim-treesitter').install(parsers)
+  if tree_sitter_cli_ok then
+    require('nvim-treesitter').install(parsers)
+  else
+    local executable = vim.fn.exepath 'tree-sitter'
+    local detail = executable ~= '' and ('The executable at %s failed or is too old.'):format(executable) or 'No executable was found.'
+    vim.schedule(function()
+      vim.notify(
+        ('Tree-sitter CLI 0.26.1 or newer is required. %s Run ~/dev/dotfiles/install.sh, then restart Neovim.'):format(detail),
+        vim.log.levels.ERROR
+      )
+    end)
+  end
 
   ---@param buf integer
   ---@param language string
@@ -942,7 +965,7 @@ do
       if vim.tbl_contains(installed_parsers, language) then
         -- Enable the parser if it is already installed
         treesitter_try_attach(buf, language)
-      elseif vim.tbl_contains(available_parsers, language) then
+      elseif tree_sitter_cli_ok and vim.tbl_contains(available_parsers, language) then
         -- If a parser is available in `nvim-treesitter`, auto-install it and enable it after the installation is done
         require('nvim-treesitter').install(language):await(function() treesitter_try_attach(buf, language) end)
       else

@@ -347,6 +347,20 @@ install_rust_toolchain() {
     command -v cargo >/dev/null 2>&1 || die "rustup completed but cargo is unavailable."
 }
 
+remove_npm_tree_sitter_cli() {
+    if ! command -v npm >/dev/null 2>&1; then
+        return
+    fi
+
+    if ! npm list --global --depth=0 tree-sitter-cli >/dev/null 2>&1; then
+        return
+    fi
+
+    say "Removing the incompatible npm-global Tree-sitter CLI..."
+    run npm uninstall --global tree-sitter-cli
+    hash -r
+}
+
 install_tree_sitter_cli() {
     local existing_path
     local cargo_bin
@@ -360,6 +374,8 @@ install_tree_sitter_cli() {
     if [ -n "$existing_path" ]; then
         warn "The Tree-sitter CLI at $existing_path is broken or older than $TREE_SITTER_MIN_VERSION."
     fi
+
+    remove_npm_tree_sitter_cli
 
     # The npm release is a prebuilt binary and may require a newer glibc than
     # the host. Cargo builds against the current Ubuntu release instead.
@@ -520,7 +536,7 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 
 choose_ubuntu_version
 describe_ubuntu_profile
