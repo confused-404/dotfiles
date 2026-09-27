@@ -10,20 +10,31 @@ DRY_RUN=false
 UBUNTU_VERSION=""
 BACKUP_SUFFIX=$(date +%Y%m%d-%H%M%S)
 NEOVIM_TEMP_DIR=""
+RUSTUP_TEMP_FILE=""
+TREE_SITTER_MIN_VERSION=0.26.1
 
 cleanup() {
-    if [ -z "$NEOVIM_TEMP_DIR" ] || [ ! -d "$NEOVIM_TEMP_DIR" ]; then
-        return
+    if [ -n "$NEOVIM_TEMP_DIR" ] && [ -d "$NEOVIM_TEMP_DIR" ]; then
+        case "$NEOVIM_TEMP_DIR" in
+            "${TMPDIR:-/tmp}"/dotfiles-neovim.*)
+                rm -rf -- "$NEOVIM_TEMP_DIR"
+                ;;
+            *)
+                warn "Refusing to remove unexpected temporary path: $NEOVIM_TEMP_DIR"
+                ;;
+        esac
     fi
 
-    case "$NEOVIM_TEMP_DIR" in
-        "${TMPDIR:-/tmp}"/dotfiles-neovim.*)
-            rm -rf -- "$NEOVIM_TEMP_DIR"
-            ;;
-        *)
-            warn "Refusing to remove unexpected temporary path: $NEOVIM_TEMP_DIR"
-            ;;
-    esac
+    if [ -n "$RUSTUP_TEMP_FILE" ] && [ -f "$RUSTUP_TEMP_FILE" ]; then
+        case "$RUSTUP_TEMP_FILE" in
+            "${TMPDIR:-/tmp}"/dotfiles-rustup.*)
+                rm -f -- "$RUSTUP_TEMP_FILE"
+                ;;
+            *)
+                warn "Refusing to remove unexpected temporary path: $RUSTUP_TEMP_FILE"
+                ;;
+        esac
+    fi
 }
 
 trap cleanup EXIT
@@ -39,7 +50,7 @@ Ubuntu release it should configure.
 Options:
   --all                     Also link every tracked configuration, including WezTerm.
   --ubuntu-version VERSION  Use VERSION without prompting (for example, 22.04).
-  --skip-packages           Do not install apt packages, Neovim, or Tree-sitter CLI.
+  --skip-packages           Do not install apt packages, Neovim, Rust, or Tree-sitter CLI.
   --skip-plugins            Do not bootstrap Neovim plugins.
   -y, --yes                 Accept installer confirmation prompts.
   --dry-run                 Print the actions without changing the system.
@@ -152,15 +163,15 @@ describe_ubuntu_profile() {
     case "$UBUNTU_VERSION" in
         22.04)
             say "Using the Ubuntu 22.04 profile (Jammy)."
-            say "A current user-local Neovim and Tree-sitter CLI will be installed when needed."
+            say "Current Neovim and Tree-sitter tools will be installed locally when needed."
             ;;
         24.04)
             say "Using the Ubuntu 24.04 profile (Noble)."
-            say "A current user-local Neovim and Tree-sitter CLI will be installed when needed."
+            say "Current Neovim and Tree-sitter tools will be installed locally when needed."
             ;;
         26.04)
             say "Using the Ubuntu 26.04 profile (Resolute)."
-            say "A current user-local Neovim will be installed when needed."
+            say "Current Neovim and Tree-sitter tools will be installed locally when needed."
             ;;
         *)
             warn "Ubuntu $UBUNTU_VERSION has not been tested with this installer."
@@ -177,21 +188,20 @@ install_apt_packages() {
         curl
         fd-find
         gcc
+        g++
         git
         gzip
+        libssl-dev
         make
         nodejs
         npm
+        pkg-config
         ripgrep
         tmux
         unzip
         wl-clipboard
         xclip
     )
-
-    if [ "$UBUNTU_VERSION" = 26.04 ]; then
-        packages+=(tree-sitter-cli)
-    fi
 
     command -v apt-get >/dev/null 2>&1 || die "apt-get was not found. This installer supports Ubuntu only."
     if [ "${EUID}" -ne 0 ] && ! command -v sudo >/dev/null 2>&1; then
@@ -287,23 +297,96 @@ install_neovim() {
     "$HOME/.local/bin/nvim" --version | sed -n '1p'
 }
 
+version_at_least() {
+    local actual=$1
+    local minimum=$2
+    local lowest
+
+    lowest=$(printf '%s\n%s\n' "$minimum" "$actual" | sort -V | sed -n '1p')
+    [ "$lowest" = "$minimum" ]
+}
+
+tree_sitter_works() {
+    local output
+    local version
+
+    command -v tree-sitter >/dev/null 2>&1 || return 1
+    output=$(tree-sitter --version 2>/dev/null) || return 1
+    version=${output#tree-sitter }
+    version=${version%% *}
+
+    [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+    version_at_least "$version" "$TREE_SITTER_MIN_VERSION"
+}
+
+install_rust_toolchain() {
+    export PATH="$HOME/.cargo/bin:$PATH"
+
+    if command -v rustup >/dev/null 2>&1; then
+        say "Updating the Rust stable toolchain..."
+        run rustup toolchain install stable --profile minimal
+        run rustup default stable
+        return
+    fi
+
+    if [ "$DRY_RUN" = true ]; then
+        say "Would install the Rust stable toolchain with rustup."
+        return
+    fi
+
+    say "Installing the Rust stable toolchain with rustup..."
+    RUSTUP_TEMP_FILE=$(mktemp "${TMPDIR:-/tmp}/dotfiles-rustup.XXXXXX")
+    curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+        --output "$RUSTUP_TEMP_FILE" \
+        https://sh.rustup.rs
+    sh "$RUSTUP_TEMP_FILE" -y --profile minimal --no-modify-path
+    rm -f -- "$RUSTUP_TEMP_FILE"
+    RUSTUP_TEMP_FILE=""
+    hash -r
+
+    command -v cargo >/dev/null 2>&1 || die "rustup completed but cargo is unavailable."
+}
+
 install_tree_sitter_cli() {
-    if command -v tree-sitter >/dev/null 2>&1; then
-        say "Tree-sitter CLI is already installed; keeping $(command -v tree-sitter)."
+    local existing_path
+    local cargo_bin
+
+    if tree_sitter_works; then
+        say "Tree-sitter CLI is compatible; keeping $(command -v tree-sitter)."
         return
     fi
 
-    if [ "$UBUNTU_VERSION" = 26.04 ]; then
-        warn "tree-sitter-cli was requested from apt but tree-sitter is not on PATH."
+    existing_path=$(command -v tree-sitter 2>/dev/null || true)
+    if [ -n "$existing_path" ]; then
+        warn "The Tree-sitter CLI at $existing_path is broken or older than $TREE_SITTER_MIN_VERSION."
+    fi
+
+    # The npm release is a prebuilt binary and may require a newer glibc than
+    # the host. Cargo builds against the current Ubuntu release instead.
+    install_rust_toolchain
+
+    cargo_bin="$HOME/.cargo/bin/cargo"
+    if [ "$DRY_RUN" = false ] && [ ! -x "$cargo_bin" ]; then
+        cargo_bin=$(command -v cargo || true)
+        [ -n "$cargo_bin" ] || die "cargo is required to build Tree-sitter CLI."
+    fi
+
+    say "Building Tree-sitter CLI locally for Ubuntu $UBUNTU_VERSION..."
+    run "$cargo_bin" install --locked --force tree-sitter-cli
+
+    if [ "$DRY_RUN" = true ]; then
         return
     fi
 
-    if ! command -v npm >/dev/null 2>&1 && [ "$DRY_RUN" = false ]; then
-        die "npm is required to install Tree-sitter CLI on Ubuntu $UBUNTU_VERSION."
+    hash -r
+    if ! "$HOME/.cargo/bin/tree-sitter" --version; then
+        die "the locally built Tree-sitter CLI failed to start."
     fi
 
-    say "Installing Tree-sitter CLI into $HOME/.local..."
-    run npm install --global --prefix "$HOME/.local" tree-sitter-cli
+    backup_and_link "$HOME/.cargo/bin/tree-sitter" "$HOME/.local/bin/tree-sitter"
+    hash -r
+    tree_sitter_works || die "the new Tree-sitter CLI is not available on PATH."
+    say "Tree-sitter CLI was rebuilt against this system's glibc."
 }
 
 backup_and_link() {
