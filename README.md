@@ -4,7 +4,9 @@ This repository contains personal shell, editor, terminal multiplexer, Git, Code
 
 ## Installation
 
-The installer expects this repository at `~/dev/dotfiles`.
+Run the installer from this checkout on Ubuntu or Kubuntu.
+Kubuntu 24.04 uses the Ubuntu 24.04 package profile, which installs clipboard tools for Wayland and X11.
+The installer backs up existing configurations beside their original paths before linking this checkout.
 Run the default installation to link the standard configurations into your home directory:
 
 ```sh

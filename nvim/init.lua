@@ -912,14 +912,15 @@ do
   vim.pack.add { { src = gh 'nvim-treesitter/nvim-treesitter', version = 'main' } }
 
   local required_cli_version = vim.version.parse '0.26.1'
-  local cli_result = vim.system({ 'tree-sitter', '--version' }, { text = true }):wait()
-  local cli_version = cli_result.code == 0 and vim.version.parse((cli_result.stdout or ''):match '%d+%.%d+%.%d+') or nil
+  local cli_result = vim.fn.executable 'tree-sitter' == 1 and vim.system({ 'tree-sitter', '--version' }, { text = true }):wait()
+  local cli_version = cli_result and cli_result.code == 0 and vim.version.parse((cli_result.stdout or ''):match '%d+%.%d+%.%d+') or nil
   local tree_sitter_cli_ok = cli_version ~= nil and vim.version.ge(cli_version, required_cli_version)
 
   -- Ensure basic parsers are installed
   local parsers = { 'bash', 'c', 'diff', 'html', 'lua', 'luadoc', 'markdown', 'markdown_inline', 'query', 'rust', 'vim', 'vimdoc' }
   if tree_sitter_cli_ok then
-    require('nvim-treesitter').install(parsers)
+    local install = require('nvim-treesitter').install(parsers)
+    if vim.env.DOTFILES_BOOTSTRAP == '1' then install:wait(600000) end
   else
     local executable = vim.fn.exepath 'tree-sitter'
     local detail = executable ~= '' and ('The executable at %s failed or is too old.'):format(executable) or 'No executable was found.'

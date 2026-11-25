@@ -89,6 +89,8 @@ run() {
 run_as_root() {
     if [ "${EUID}" -eq 0 ]; then
         run "$@"
+    elif [ ! -t 0 ] && [ -n "${SUDO_ASKPASS:-}" ]; then
+        run sudo -A "$@"
     else
         run sudo "$@"
     fi
@@ -475,8 +477,7 @@ run_markdown_preview_install() {
     say "Building markdown-preview.nvim..."
     (
         cd "$plugin/app"
-        npx --yes yarn install
-        npx --yes yarn build
+        npx --yes yarn@1 install --frozen-lockfile
     )
 }
 
@@ -492,10 +493,8 @@ bootstrap_neovim() {
     fi
 
     say "Starting Neovim once to install configured plugins..."
-    if ! nvim --headless "+qa"; then
-        warn "Neovim plugin bootstrap failed. Run nvim and :checkhealth for details."
-        return
-    fi
+    DOTFILES_BOOTSTRAP=1 nvim --headless "+MasonToolsInstallSync" \
+        "+lua if vim.v.errmsg ~= '' then print(vim.v.errmsg); vim.cmd('cquit 1') end" "+qa"
 
     run_markdown_preview_install
 }

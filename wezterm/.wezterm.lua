@@ -17,7 +17,7 @@ config.keys = {
     mods = "CTRL|SHIFT",
     action = act.ShowLauncherArgs({
       flags = "FUZZY|DOMAINS",
-      title = "Choose Ubuntu version",
+      title = "Choose a domain",
     }),
   },
 }
